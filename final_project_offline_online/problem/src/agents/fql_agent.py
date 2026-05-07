@@ -49,9 +49,8 @@ class FQLAgent(nn.Module):
         Used for evaluation.
         """
         observation = ptu.from_numpy(np.asarray(observation))[None]
-        # TODO(student): Compute the action for evaluation
-        # Hint: Unlike SAC+BC and IQL, the evaluation action is *sampled* (i.e., not the mode or mean) from the policy
-        action = ...
+        z = torch.randn(1, self.action_dim, device=observation.device)
+        action = self.onestep_actor(observation, z)
         action = torch.clamp(action, -1, 1)
         return ptu.to_numpy(action)[0]
 
@@ -60,9 +59,13 @@ class FQLAgent(nn.Module):
         """
         Used for training.
         """
-        # TODO(student): Compute the BC flow action using the Euler method for `self.flow_steps` steps
-        # Hint: This function should *only* be used in `update_onestep_actor`
-        action = ...
+        action = noise + 0
+        step_size = 1.0 / self.flow_steps
+        for step_idx in range(self.flow_steps):
+            time_frac = torch.full(
+                (*noise.shape[:-1], 1), step_idx * step_size, device=noise.device
+            )
+            action = action + step_size * self.bc_actor(observation, action, time_frac)
         action = torch.clamp(action, -1, 1)
         return action
 
@@ -78,11 +81,16 @@ class FQLAgent(nn.Module):
         """
         Update Q(s, a)
         """
-        # TODO(student): Compute the Q loss
-        # Hint: Use the one-step actor to compute next actions
-        # Hint: Remember to clamp the actions to be in [-1, 1] when feeding them to the critic!
-        q = ...
-        loss = ...
+        with torch.no_grad():
+            z_next = torch.randn_like(actions)
+            a_next = self.onestep_actor(next_observations, z_next)
+            a_next = torch.clamp(a_next, -1, 1)
+            q_target_pair = self.target_critic(next_observations, a_next)
+            q_next_mean = q_target_pair.mean(dim=0)
+            td_target = rewards + self.discount * (1 - dones) * q_next_mean
+
+        q = self.critic(observations, actions)
+        loss = ((q - td_target[None]) ** 2).mean()
 
         self.critic_optimizer.zero_grad()
         loss.backward()
@@ -104,8 +112,13 @@ class FQLAgent(nn.Module):
         """
         Update the BC actor
         """
-        # TODO(student): Compute the BC flow loss
-        loss = ...
+        z = torch.randn_like(actions)
+        time_frac = torch.rand(actions.shape[0], 1, device=actions.device)
+        a_interp = (1 - time_frac) * z + time_frac * actions
+        flow_target = actions - z
+
+        v_pred = self.bc_actor(observations, a_interp, time_frac)
+        loss = ((v_pred - flow_target) ** 2).mean(dim=-1).mean()
 
         self.bc_actor_optimizer.zero_grad()
         loss.backward()
@@ -124,18 +137,21 @@ class FQLAgent(nn.Module):
         """
         Update the one-step actor
         """
-        # TODO(student): Compute the one-step actor loss
-        # Hint: Do *not* clip the one-step actor actions when computing the distillation loss
-        distill_loss = ...
+        z = torch.randn_like(actions)
+        a_onestep = self.onestep_actor(observations, z)
 
-        # Hint: *Do* clip the one-step actor actions when feeding them to the critic
-        q_loss = ...
+        a_bc = self.get_bc_action(observations, z).detach()
 
-        # Total loss.
+        distill_loss = self.alpha * ((a_onestep - a_bc) ** 2).mean(dim=-1).mean()
+
+        a_onestep_clipped = torch.clamp(a_onestep, -1, 1)
+        q_onestep = self.critic(observations, a_onestep_clipped)
+        q_loss = -q_onestep.mean(dim=0).mean()
+
         loss = distill_loss + q_loss
 
-        # Additional metrics for logging.
-        mse = ...
+        with torch.no_grad():
+            mse = ((a_onestep - a_bc) ** 2).mean(dim=-1).mean()
 
         self.onestep_actor_optimizer.zero_grad()
         loss.backward()
@@ -171,5 +187,10 @@ class FQLAgent(nn.Module):
         return metrics
 
     def update_target_critic(self) -> None:
-        # TODO(student): Update target_critic using Polyak averaging with self.target_update_rate
-        ...
+        for target_param, online_param in zip(
+            self.target_critic.parameters(), self.critic.parameters()
+        ):
+            target_param.data.copy_(
+                self.target_update_rate * online_param.data
+                + (1 - self.target_update_rate) * target_param.data
+            )

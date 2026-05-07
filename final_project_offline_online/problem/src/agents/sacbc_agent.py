@@ -63,9 +63,17 @@ class SACBCAgent(nn.Module):
         """
         Update Q(s, a)
         """
-        # TODO(student): Compute the Q loss
-        q = ...
-        loss = ...
+        with torch.no_grad():
+            policy_next = self.actor(next_observations)
+            a_next = policy_next.rsample()
+            q_target_pair = self.target_critic(next_observations, a_next)
+            q_next_mean = q_target_pair.mean(dim=0)
+            td_target = rewards + self.discount * (1 - dones) * q_next_mean
+
+        q = self.critic(observations, actions)
+        loss = 0.0
+        for i in range(q.shape[0]):
+            loss = loss + ((q[i] - td_target) ** 2).mean()
 
         self.critic_optimizer.zero_grad()
         loss.backward()
@@ -87,13 +95,17 @@ class SACBCAgent(nn.Module):
         """
         Update the actor
         """
-        # TODO(student): Compute the actor loss
-        q_loss = ...
+        policy = self.actor(observations)
+        a_pi = policy.rsample()
+        log_pi = policy.log_prob(a_pi)
 
-        mses = ...
-        bc_loss = ...
+        q_pi = self.critic(observations, a_pi)
+        q_loss = -q_pi.mean(dim=0).mean()
 
-        entropy_loss = ...
+        mses = (actions - a_pi) ** 2
+        bc_loss = self.alpha * mses.mean(dim=-1).mean()
+
+        entropy_loss = (self.beta().detach() * log_pi).mean()
 
         loss = q_loss + bc_loss + entropy_loss
 
@@ -117,11 +129,11 @@ class SACBCAgent(nn.Module):
         """
         Update the beta parameter using dual gradient descent.
         """
-        actor_dists = self.actor(observations)
-        actor_actions = actor_dists.rsample()
-        log_probs = actor_dists.log_prob(actor_actions)
+        policy = self.actor(observations)
+        a_pi = policy.rsample()
+        log_pi = policy.log_prob(a_pi)
 
-        loss = self.beta() * (-log_probs - self.target_entropy).detach().mean()
+        loss = self.beta() * (-log_pi - self.target_entropy).detach().mean()
 
         self.beta_optimizer.zero_grad()
         loss.backward()
@@ -155,5 +167,10 @@ class SACBCAgent(nn.Module):
         return metrics
 
     def update_target_critic(self) -> None:
-        # TODO(student): Update target_critic using Polyak averaging with self.target_update_rate
-        ...
+        for target_param, online_param in zip(
+            self.target_critic.parameters(), self.critic.parameters()
+        ):
+            target_param.data.copy_(
+                self.target_update_rate * online_param.data
+                + (1 - self.target_update_rate) * target_param.data
+            )

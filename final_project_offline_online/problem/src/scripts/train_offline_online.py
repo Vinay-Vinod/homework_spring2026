@@ -71,10 +71,20 @@ def run_online_training_loop(config: dict, train_logger, eval_logger, args: argp
     Run online training loop (collect data in env, store in replay buffer, update).
     """
     online_buffer = ReplayBuffer(capacity=config['replay_buffer_capacity'])
+    if config["offline_data"] > 0:
+        b = dataset.sample(min(config["offline_data"], online_buffer.max_size))
+        for i in range(len(b["observations"])):
+            online_buffer.insert(
+                observation=b["observations"][i],
+                action=b["actions"][i],
+                reward=b["rewards"][i],
+                next_observation=b["next_observations"][i],
+                done=b["dones"][i],
+            )
 
     ep_len = env.spec.max_episode_steps or env.max_episode_steps
 
-    obs, _ = env.reset()
+    obs, i = env.reset()
 
     for step in tqdm.trange(start_step, start_step + config["online_training_steps"] + 1, dynamic_ncols=True):
         with torch.no_grad():
@@ -94,7 +104,7 @@ def run_online_training_loop(config: dict, train_logger, eval_logger, args: argp
         if terminated or truncated:
             obs, _ = env.reset()
 
-        if len(online_buffer) >= config["batch_size"]:
+        if (step - start_step >= config["wsrl_steps"] and len(online_buffer) >= config["batch_size"]):
             batch = online_buffer.sample(config["batch_size"])
             batch = {
                 k: ptu.from_numpy(v) if isinstance(v, np.ndarray) else v for k, v in batch.items()
@@ -202,6 +212,10 @@ def main(args):
     if args.noise_scale is not None:
         config['agent_kwargs']['noise_scale'] = args.noise_scale
         exp_name = f"{exp_name}_n{args.noise_scale}"
+    if args.offline_data > 0:
+        exp_name = f"{exp_name}_od{args.offline_data}"
+    if args.wsrl_steps > 0:
+        exp_name = f"{exp_name}_wsrl{args.wsrl_steps}"
     if args.online_training_steps > 0:
         exp_name = f"{exp_name}_online"
     if args.offline_training_steps > 0:

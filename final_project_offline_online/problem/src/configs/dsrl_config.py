@@ -28,20 +28,39 @@ def dsrl_config(
     **kwargs,
 ):
     def make_bc_flow_actor(observation_shape: Tuple[int, ...], action_dim: int) -> nn.Module:
-        # TODO(student): Create BC flow actor - refer to FQL config
-        return ...
+        return VectorFieldPolicy(
+            ac_dim=action_dim,
+            ob_dim=int(np.prod(observation_shape)),
+            n_layers=num_layers,
+            layer_size=hidden_size,
+        )
 
     def make_noise_actor(observation_shape: Tuple[int, ...], action_dim: int) -> nn.Module:
-        # TODO(student): Create noise actor - this can be a regular MLP
-        return ...
+        return Policy(
+            ac_dim=action_dim,
+            ob_dim=int(np.prod(observation_shape)),
+            discrete=False,
+            n_layers=num_layers,
+            layer_size=hidden_size,
+        )
 
     def make_critic(observation_shape: Tuple[int, ...], action_dim: int) -> nn.Module:
-        # TODO(student): Create critic - will be a ensemble of Q-functions
-        return ...
+        return EnsembleCritic(
+            ob_dim=int(np.prod(observation_shape)),
+            ac_dim=action_dim,
+            n_layers=num_layers,
+            size=hidden_size,
+            n_ensembles=2,
+        )
     
     def make_noise_critic(observation_shape: Tuple[int, ...], action_dim: int) -> nn.Module:
-        # TODO(student): Create noise critic - will be a ensemble of Q-functions
-        return ...
+        return EnsembleCritic(
+            ob_dim=int(np.prod(observation_shape)),
+            ac_dim=action_dim,
+            n_layers=num_layers,
+            size=hidden_size,
+            n_ensembles=2,
+        )
 
     def make_optimizer(params) -> torch.optim.Optimizer:
         return torch.optim.Adam(params, lr=learning_rate)
@@ -69,6 +88,8 @@ def dsrl_config(
             "make_noise_actor_optimizer": make_optimizer,
             "make_critic": make_critic,
             "make_critic_optimizer": make_optimizer,
+            "make_z_critic": make_noise_critic,
+            "make_z_critic_optimizer": make_optimizer,
 
             "discount": discount,
             "target_update_rate": target_update_rate,

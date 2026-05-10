@@ -23,10 +23,8 @@ class IFQLAgent(nn.Module):
         discount: float,
         target_update_rate: float,
         flow_steps: int,
-        online_training: bool = False,
         num_samples: int = 32,
         expectile: float = 0.9,
-        rho: float = 0.5,
         **kwargs,
     ):
         super().__init__()

@@ -25,7 +25,6 @@ def qsm_config(
     alpha: float = 1.0,
     total_steps: int = 1000000,
     batch_size: int = 256,
-    rho: float = 0.5,
     inv_temp: float = 1.0,
     **kwargs,
 ):

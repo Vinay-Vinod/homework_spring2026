@@ -66,7 +66,7 @@ env = {
 }
 
 
-@app.function(volumes={VOLUME_PATH: volume}, timeout=60 * 60 * 12, env=env, image=image, gpu=DEFAULT_GPU, cpu=DEFAULT_CPU, memory=DEFAULT_MEMORY)
+@app.function(volumes={VOLUME_PATH: volume}, timeout=60 * 60 * 24, env=env, image=image, gpu=DEFAULT_GPU, cpu=DEFAULT_CPU, memory=DEFAULT_MEMORY)
 def offline_to_online_modal_remote(*args: str) -> None:
     args = setup_arguments(args)
     if args.njobs is not None and len(args.job_specs) > 0:

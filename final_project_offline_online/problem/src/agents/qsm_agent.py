@@ -65,7 +65,8 @@ class QSMAgent(nn.Module):
         for i in reversed(range(self.flow_steps)):
             t = torch.full((x.shape[0], 1), i / self.flow_steps, device=x.device)
             e = self.actor(observations, x, t)
-            x = (x - torch.sqrt(self.betas[i]) / torch.sqrt(1 - self.alpha_hats[i]) * e) / torch.sqrt(self.alphas[i])
+            #had sqrt here has a possible fix, didnt work
+            x = (x - self.betas[i] / torch.sqrt(1 - self.alpha_hats[i]) * e) / torch.sqrt(self.alphas[i])
             if i > 0:
                 x = x + torch.sqrt(self.betas[i]) * torch.randn_like(x)
         return torch.clamp(x, -1, 1)
@@ -122,8 +123,8 @@ class QSMAgent(nn.Module):
         a = self.alpha_hats[k][:, None]
         x = (a.sqrt() * actions + (1 - a).sqrt() * z).detach().requires_grad_(True)
         e = self.actor(observations, x, k[:, None].float() / self.flow_steps)
-        q = self.critic(observations, x).min(0)[0].sum()
-        g = torch.autograd.grad(q, x, retain_graph=True)[0].detach()
+        q = self.target_critic(observations, x).min(0)[0].sum()
+        g = torch.autograd.grad(q, x)[0].detach()
         loss = ((-e - self.inv_temp * g) ** 2).mean() + self.alpha * ((z - e) ** 2).mean()
 
         self.actor_optimizer.zero_grad()
@@ -152,6 +153,19 @@ class QSMAgent(nn.Module):
             "q_min": mq["q_min"].item(),
             "actor_loss": ma["actor_loss"].item(),
         }
+
+        #logs
+        with torch.no_grad():
+            n = min(16, observations.shape[0])
+            sample_obs = observations[:n]
+            sample_act = self.ddpm_sampler(
+                sample_obs,
+                torch.randn(n, self.action_dim, device=sample_obs.device),
+            )
+            metrics["sample_abs_mean"] = sample_act.abs().mean().item()
+            metrics["sample_abs_max"] = sample_act.abs().max().item()
+            metrics["sample_sat_frac"] = (sample_act.abs() > 0.99).float().mean().item()
+        #
 
         self.update_target_critic()
 

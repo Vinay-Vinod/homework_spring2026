@@ -65,7 +65,7 @@ class QSMAgent(nn.Module):
         for i in reversed(range(self.flow_steps)):
             t = torch.full((x.shape[0], 1), i / self.flow_steps, device=x.device)
             e = self.actor(observations, x, t)
-            x = (x - self.betas[i] / torch.sqrt(1 - self.alpha_hats[i]) * e) / torch.sqrt(self.alphas[i])
+            x = (x - torch.sqrt(self.betas[i]) / torch.sqrt(1 - self.alpha_hats[i]) * e) / torch.sqrt(self.alphas[i])
             if i > 0:
                 x = x + torch.sqrt(self.betas[i]) * torch.randn_like(x)
         return torch.clamp(x, -1, 1)

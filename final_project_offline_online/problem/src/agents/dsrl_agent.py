@@ -140,7 +140,7 @@ class DSRLAgent(nn.Module):
         actions: torch.Tensor,
     ) -> dict:
         """Update BC flow actor"""
-        z = torch.randn_like(actions)
+        z = self.noise_scale * torch.randn_like(actions)
         t = torch.rand(actions.shape[0], 1, device=actions.device)
         loss = ((self.bc_flow_actor(observations, (1 - t) * z + t * actions, t) - (actions - z)) ** 2).mean()
 

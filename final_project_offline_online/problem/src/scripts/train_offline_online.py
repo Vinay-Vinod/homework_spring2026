@@ -262,6 +262,7 @@ if __name__ == "__main__":
     if args.njobs is not None and len(args.job_specs) > 0:
         # Run n jobs in parallel
         from scripts.run_njobs import main_njobs
+
         main_njobs(job_specs=args.job_specs, njobs=args.njobs)
     else:
         # Run a single job

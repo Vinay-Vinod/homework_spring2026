@@ -69,7 +69,8 @@ class QSMAgent(nn.Module):
             x = (x - self.betas[i] / torch.sqrt(1 - self.alpha_hats[i]) * e) / torch.sqrt(self.alphas[i])
             if i > 0:
                 x = x + torch.sqrt(self.betas[i]) * torch.randn_like(x)
-        return torch.clamp(x, -1, 1)
+            x = torch.clamp(x, -1, 1)  # clamp each step for stability
+        return x
     
     def get_action(self, observation: torch.Tensor):
         """
@@ -92,7 +93,8 @@ class QSMAgent(nn.Module):
         """
         with torch.no_grad():
             a = self.ddpm_sampler(next_observations, torch.randn_like(actions))
-            y = rewards + self.discount * (1 - dones) * self.target_critic(next_observations, a).min(0)[0]
+            #try mean instead of min
+            y = rewards + self.discount * (1 - dones) * self.target_critic(next_observations, a).mean(0)
 
         q = self.critic(observations, actions)
         loss = ((q - y[None]) ** 2).mean()
@@ -123,7 +125,8 @@ class QSMAgent(nn.Module):
         a = self.alpha_hats[k][:, None]
         x = (a.sqrt() * actions + (1 - a).sqrt() * z).detach().requires_grad_(True)
         e = self.actor(observations, x, k[:, None].float() / self.flow_steps)
-        q = self.target_critic(observations, x).min(0)[0].sum()
+        # min -> mean change
+        q = self.target_critic(observations, x).mean(0).sum()
         g = torch.autograd.grad(q, x)[0].detach()
         loss = ((-e - self.inv_temp * g) ** 2).mean() + self.alpha * ((z - e) ** 2).mean()
 

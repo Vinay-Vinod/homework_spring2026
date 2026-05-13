@@ -62,12 +62,11 @@ class DSRLAgent(nn.Module):
 
         self.online_training = online_training
 
-
         self.to(ptu.device)
 
     @property
     def alpha(self):
-        return self.log_alpha.exp()
+        return torch.exp(self.log_alpha)
 
     @torch.compiler.disable
     def sample_flow_actions(self, observations: torch.Tensor, noises: torch.Tensor) -> torch.Tensor:
@@ -77,7 +76,7 @@ class DSRLAgent(nn.Module):
             hv = k / self.flow_steps
             h = hv * torch.ones((observations.shape[0], 1), device=observations.device)
             action = action + self.target_bc_flow_actor(observations, action, h) / self.flow_steps
-
+            
         return torch.clamp(action, -1, 1)
 
     @torch.no_grad()
@@ -130,8 +129,8 @@ class DSRLAgent(nn.Module):
             a = self.sample_flow_actions(observations, noises)
             y = self.target_critic(observations, a).mean(dim=0, keepdim=True)
 
-        q = self.z_critic(observations, actions)
-        loss = ((q - y) ** 2).mean()
+        qz = self.z_critic(observations, actions)
+        loss = ((qz - y) ** 2).mean()
 
         self.z_critic_optimizer.zero_grad()
         loss.backward()
@@ -139,7 +138,7 @@ class DSRLAgent(nn.Module):
 
         return {
             "z_q_loss": loss,
-            "z_q_mean": q.mean(),
+            "z_q_mean": qz.mean(),
         }
 
     def update_actor(
@@ -148,8 +147,9 @@ class DSRLAgent(nn.Module):
         actions: torch.Tensor,
     ) -> dict:
         """Update BC flow actor"""
-        z = self.noise_scale * torch.randn_like(actions)
+        z = torch.randn_like(actions)
         t = torch.rand(actions.shape[0], 1, device=actions.device)
+        
         loss = ((self.bc_flow_actor(observations, (1 - t) * z + t * actions, t) - (actions - z)) ** 2).mean()
 
         self.bc_flow_actor_optimizer.zero_grad()
@@ -166,7 +166,7 @@ class DSRLAgent(nn.Module):
         """Update noise actor."""
         p = self.noise_actor(observations)
         z = p.rsample()
-        log_prob =  p.log_prob(z).unsqueeze(-1)
+        log_prob = p.log_prob(z).unsqueeze(-1)
         self._last_log_prob = log_prob.detach()
 
         loss = (self.alpha.detach() * log_prob - self.z_critic(observations, self.noise_scale * z).mean(dim=0)).mean()
@@ -181,8 +181,10 @@ class DSRLAgent(nn.Module):
 
     def update_alpha(self) -> dict:
         """Update alpha."""
-        p = self._last_log_prob
-        loss = -(self.log_alpha * (p + self.target_entropy)).mean()
+
+        log_prob = self._last_log_prob
+
+        loss = -(self.log_alpha * (log_prob + self.target_entropy)).mean()
 
         self.alpha_optimizer.zero_grad()
         loss.backward()
@@ -212,7 +214,8 @@ class DSRLAgent(nn.Module):
         dones: torch.Tensor,
         step: int,
     ):
-        z = torch.randn_like(actions)
+        with torch.no_grad():
+            z = torch.randn(observations.shape[0], self.action_dim, device=observations.device)
         mq = self.update_q(observations, actions, rewards, next_observations, dones)
         mz = self.update_qz(observations, z, z)
         ma = self.update_actor(observations, actions)

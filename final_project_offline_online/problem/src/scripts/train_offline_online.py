@@ -103,24 +103,51 @@ def run_online_training_loop(config: dict, train_logger, eval_logger, args: argp
         obs = next_obs
         if terminated or truncated:
             obs, _ = env.reset()
+        
+        if (config["rlpd"]):
+            if (step - start_step >= config["wsrl_steps"] and len(online_buffer) >= config["batch_size"] // 2):
+                online_batch_size = config["batch_size"] // 2
+                offline_batch_size = config["batch_size"] - online_batch_size
 
-        if (step - start_step >= config["wsrl_steps"] and len(online_buffer) >= config["batch_size"]):
-            batch = online_buffer.sample(config["batch_size"])
-            batch = {
-                k: ptu.from_numpy(v) if isinstance(v, np.ndarray) else v for k, v in batch.items()
-            }
+                online_batch = online_buffer.sample(online_batch_size)
+                offline_batch = dataset.sample(offline_batch_size)
+                batch = {}
+                for k in online_batch:
+                    batch[k] = np.concatenate([online_batch[k], offline_batch[k]], axis=0)
 
-            metrics = agent.update(
-                batch["observations"],
-                batch["actions"],
-                batch["rewards"],
-                batch["next_observations"],
-                batch["dones"],
-                step,
-            )
+                batch = {
+                    k: ptu.from_numpy(v) if isinstance(v, np.ndarray) else v for k, v in batch.items()
+                }
 
-            if step % args.log_interval == 0:
-                train_logger.log(metrics, step=step)
+                metrics = agent.update(
+                    batch["observations"],
+                    batch["actions"],
+                    batch["rewards"],
+                    batch["next_observations"],
+                    batch["dones"],
+                    step,
+                )
+
+                if step % args.log_interval == 0:
+                    train_logger.log(metrics, step=step)
+        else:
+            if (step - start_step >= config["wsrl_steps"] and len(online_buffer) >= config["batch_size"]):
+                batch = online_buffer.sample(config["batch_size"])
+                batch = {
+                    k: ptu.from_numpy(v) if isinstance(v, np.ndarray) else v for k, v in batch.items()
+                }
+
+                metrics = agent.update(
+                    batch["observations"],
+                    batch["actions"],
+                    batch["rewards"],
+                    batch["next_observations"],
+                    batch["dones"],
+                    step,
+                )
+
+                if step % args.log_interval == 0:
+                    train_logger.log(metrics, step=step)
 
         if step % args.eval_interval == 0:
             eval_rollouts = utils.sample_n_trajectories(
@@ -151,7 +178,11 @@ def setup_arguments(args=None):
     parser.add_argument("--log_interval", type=int, default=10000)
     parser.add_argument("--eval_interval", type=int, default=100000)
     parser.add_argument("--num_eval_trajectories", type=int, default=25)  # Should be greater than or equal to 20 to pass autograder
-    
+    parser.add_argument("--rlpd", action="store_true")  
+    parser.add_argument("--num_samples", type=int, default=None)
+    parser.add_argument("--rho", type=float, default=None)
+    parser.add_argument("--num_critics", type=int, default=None)
+
     # Online retention of offline data
     parser.add_argument("--offline_data", type=int, default=0)
     
@@ -183,7 +214,12 @@ def main(args):
     # Create directory for logging
     logdir_prefix = "exp"  # Keep for autograder
 
-    config = configs.configs[args.base_config](args.env_name)
+    config_kwargs = {}
+    if args.num_critics is not None:
+        config_kwargs["num_critics"] = args.num_critics
+
+    config = configs.configs[args.base_config](args.env_name, **config_kwargs,)
+
 
     # Set common config values from args for autograder
     config['seed'] = args.seed
@@ -196,6 +232,10 @@ def main(args):
     config['replay_buffer_capacity'] = args.replay_buffer_capacity
     config['offline_data'] = args.offline_data
     config['wsrl_steps'] = args.wsrl_steps
+    if args.base_config == "pqsmpd":
+        config["rlpd"] = True
+    else:
+        config["rlpd"] = args.rlpd
 
     exp_name = f"sd{args.seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{config['log_name']}"
 
@@ -220,6 +260,14 @@ def main(args):
         exp_name = f"{exp_name}_online"
     if args.offline_training_steps > 0:
         exp_name = f"{exp_name}_offline"
+    if args.num_samples is not None:
+        config["agent_kwargs"]["num_samples"] = args.num_samples
+        exp_name = f"{exp_name}_ns{args.num_samples}"
+    if args.rho is not None:
+        config["agent_kwargs"]["rho"] = args.rho
+        exp_name = f"{exp_name}_rho{args.rho}"
+    if args.num_critics is not None:
+        exp_name = f"{exp_name}_nc{args.num_critics}"
 
     setup_wandb(project='cs185_default_project', name=exp_name, group=args.run_group, config=config)
     args.save_dir = os.path.join(logdir_prefix, args.run_group, exp_name)

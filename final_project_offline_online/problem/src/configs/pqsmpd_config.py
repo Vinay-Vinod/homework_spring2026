@@ -13,7 +13,7 @@ from networks.rl_networks import Policy, EnsembleCritic, DeterministicPolicy, Ve
 
 
 
-def qsm_config(
+def pqsmpd_config(
     env_name: str,
     exp_name: Optional[str] = None,
     hidden_size: int = 512,
@@ -26,6 +26,9 @@ def qsm_config(
     total_steps: int = 1000000,
     batch_size: int = 256,
     inv_temp: float = 1.0,
+    num_samples: int = 32,
+    rho: float = 0.5,
+    num_critics: int = 4,
     **kwargs,
 ):
     def make_actor(observation_shape: Tuple[int, ...], action_dim: int) -> nn.Module:
@@ -42,7 +45,7 @@ def qsm_config(
             ac_dim=action_dim,
             n_layers=num_layers,
             size=hidden_size,
-            n_ensembles=2,
+            n_ensembles=num_critics,
         )
     
     def make_optimizer(params: torch.nn.ParameterList) -> torch.optim.Optimizer:
@@ -61,7 +64,7 @@ def qsm_config(
 
         return env, dataset
 
-    log_string = f"{exp_name or 'qsm'}_{env_name}"
+    log_string = f"{exp_name or 'pqsmpd'}_{env_name}"
 
     config = {
         "agent_kwargs": {
@@ -75,8 +78,10 @@ def qsm_config(
             "flow_steps": flow_steps,
             "alpha": alpha,
             "inv_temp": inv_temp,
+            "num_samples": num_samples,
+            "rho": rho,
         },
-        "agent": "qsm",
+        "agent": "pqsmpd",
         "log_name": log_string,
         "make_env_and_dataset": make_env_and_dataset,
         "total_steps": total_steps,

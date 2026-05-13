@@ -90,6 +90,7 @@ def dsrl_config(
             "make_critic_optimizer": make_optimizer,
             "make_z_critic": make_noise_critic,
             "make_z_critic_optimizer": make_optimizer,
+            "make_alpha_optimizer": make_optimizer,
 
             "discount": discount,
             "target_update_rate": target_update_rate,

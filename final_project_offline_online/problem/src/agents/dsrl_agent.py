@@ -88,8 +88,7 @@ class DSRLAgent(nn.Module):
         """Used for evaluation."""
         with torch.no_grad():
             obs = ptu.from_numpy(observation).unsqueeze(0)
-            action = self.sample_actions(obs)
-            return ptu.to_numpy(action.squeeze(0).cpu())
+        return ptu.to_numpy(self.sample_actions(obs).squeeze(0).cpu())
 
     def update_q(
         self,
@@ -218,8 +217,6 @@ class DSRLAgent(nn.Module):
         with torch.no_grad():
             z = torch.randn(observations.shape[0], self.action_dim, device=observations.device)
         mq = self.update_q(observations, actions, rewards, next_observations, dones)
-
-        
         mz = self.update_qz(observations, z, z)
         ma = self.update_actor(observations, actions)
         mn = self.update_noise_actor(observations)

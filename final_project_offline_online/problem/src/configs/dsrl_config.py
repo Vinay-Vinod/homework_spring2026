@@ -42,6 +42,8 @@ def dsrl_config(
             discrete=False,
             n_layers=num_layers,
             layer_size=hidden_size,
+            use_tanh=True,                                       
+            state_dependent_std=True,
         )
 
     def make_critic(observation_shape: Tuple[int, ...], action_dim: int) -> nn.Module:

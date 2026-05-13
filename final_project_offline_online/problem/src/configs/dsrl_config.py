@@ -42,6 +42,8 @@ def dsrl_config(
             discrete=False,
             n_layers=num_layers,
             layer_size=hidden_size,
+            use_tanh=True,                                       
+            state_dependent_std=True,
         )
 
     def make_critic(observation_shape: Tuple[int, ...], action_dim: int) -> nn.Module:
@@ -90,6 +92,7 @@ def dsrl_config(
             "make_critic_optimizer": make_optimizer,
             "make_z_critic": make_noise_critic,
             "make_z_critic_optimizer": make_optimizer,
+            "make_alpha_optimizer": make_optimizer,
 
             "discount": discount,
             "target_update_rate": target_update_rate,

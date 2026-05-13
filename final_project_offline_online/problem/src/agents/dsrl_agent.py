@@ -23,6 +23,7 @@ class DSRLAgent(nn.Module):
         make_critic_optimizer,
         make_z_critic,
         make_z_critic_optimizer,
+        make_alpha_optimizer,
 
         discount: float,
         target_update_rate: float,
@@ -57,7 +58,10 @@ class DSRLAgent(nn.Module):
         self.noise_actor_optimizer = make_noise_actor_optimizer(self.noise_actor.parameters())
         self.critic_optimizer = make_critic_optimizer(self.critic.parameters())
         self.z_critic_optimizer = make_z_critic_optimizer(self.z_critic.parameters())
-        self.alpha_optimizer = make_noise_actor_optimizer([self.log_alpha])
+        self.alpha_optimizer = make_alpha_optimizer([self.log_alpha])
+
+        self.online_training = online_training
+
 
         self.to(ptu.device)
 
@@ -68,20 +72,24 @@ class DSRLAgent(nn.Module):
     @torch.compiler.disable
     def sample_flow_actions(self, observations: torch.Tensor, noises: torch.Tensor) -> torch.Tensor:
         """Euler integration of BC flow from t=0 to t=1."""
-        h = 1.0 / self.flow_steps
-        action = noises + 0
+        action = noises 
         for k in range(self.flow_steps):
-            action = action + h * self.target_bc_flow_actor(observations, action, torch.full((*noises.shape[:-1], 1), k * h, device=noises.device))
+            hv = k / self.flow_steps
+            h = hv * torch.ones((observations.shape[0], 1), device=observations.device)
+            action = action + self.target_bc_flow_actor(observations, action, h) / self.flow_steps
+
         return torch.clamp(action, -1, 1)
 
     @torch.no_grad()
     def sample_actions(self, observations: torch.Tensor) -> torch.Tensor:
         """Sample actions using noise policy for noise input to BC flow policy."""
-        return self.sample_flow_actions(observations, self.noise_scale * self.noise_actor(observations).rsample())
+        return self.sample_flow_actions(observations, self.noise_scale * self.noise_actor(observations).sample())
     
     def get_action(self, observation: np.ndarray):
         """Used for evaluation."""
-        return ptu.to_numpy(self.sample_actions(ptu.from_numpy(np.asarray(observation))[None]))[0]
+        with torch.no_grad():
+            obs = ptu.from_numpy(observation).unsqueeze(0)
+        return ptu.to_numpy(self.sample_actions(obs).squeeze(0).cpu())
 
     def update_q(
         self,
@@ -93,12 +101,12 @@ class DSRLAgent(nn.Module):
     ) -> dict:
         """Update critic"""
         with torch.no_grad():
-            z = self.noise_actor(next_observations).rsample()
+            z = self.noise_actor(next_observations).sample()
             a = self.sample_flow_actions(next_observations, self.noise_scale * z)
-            y = rewards + self.discount * (1 - dones) * self.target_critic(next_observations, a).min(0)[0]
+            y = rewards + self.discount * (1 - dones) * self.target_critic(next_observations, a).mean(dim=0, keepdim=True)
 
         q = self.critic(observations, actions)
-        loss = ((q - y[None]) ** 2).mean()
+        loss = ((q - y) ** 2).mean()
 
         self.critic_optimizer.zero_grad()
         loss.backward()
@@ -119,11 +127,11 @@ class DSRLAgent(nn.Module):
         """Update z_critic."""
 
         with torch.no_grad():
-            a = self.sample_flow_actions(observations, self.noise_scale * noises)
-            y = self.critic(observations, a).min(0)[0]
+            a = self.sample_flow_actions(observations, noises)
+            y = self.target_critic(observations, a).mean(dim=0, keepdim=True)
 
-        q = self.z_critic(observations, self.noise_scale * noises)
-        loss = ((q - y[None]) ** 2).mean()
+        q = self.z_critic(observations, actions)
+        loss = ((q - y) ** 2).mean()
 
         self.z_critic_optimizer.zero_grad()
         loss.backward()
@@ -158,7 +166,10 @@ class DSRLAgent(nn.Module):
         """Update noise actor."""
         p = self.noise_actor(observations)
         z = p.rsample()
-        loss = (self.alpha.detach() * p.log_prob(z) - self.z_critic(observations, self.noise_scale * z).min(0)[0]).mean()
+        log_prob =  p.log_prob(z).unsqueeze(-1)
+        self._last_log_prob = log_prob.detach()
+
+        loss = (self.alpha.detach() * log_prob - self.z_critic(observations, self.noise_scale * z).mean(dim=0)).mean()
 
         self.noise_actor_optimizer.zero_grad()
         loss.backward()
@@ -168,10 +179,10 @@ class DSRLAgent(nn.Module):
             "noise_actor_loss": loss,
         }
 
-    def update_alpha(self, observations: torch.Tensor) -> dict:
+    def update_alpha(self) -> dict:
         """Update alpha."""
-        p = self.noise_actor(observations)
-        loss = -(self.alpha * (p.log_prob(p.rsample()) + self.target_entropy).detach()).mean()
+        p = self._last_log_prob
+        loss = -(self.log_alpha * (p + self.target_entropy)).mean()
 
         self.alpha_optimizer.zero_grad()
         loss.backward()
@@ -203,10 +214,10 @@ class DSRLAgent(nn.Module):
     ):
         z = torch.randn_like(actions)
         mq = self.update_q(observations, actions, rewards, next_observations, dones)
-        mz = self.update_qz(observations, actions, z)
+        mz = self.update_qz(observations, z, z)
         ma = self.update_actor(observations, actions)
         mn = self.update_noise_actor(observations)
-        malpha = self.update_alpha(observations)
+        malpha = self.update_alpha()
         metrics = {
             "q_loss": mq["q_loss"].item(),
             "q_mean": mq["q_mean"].item(),

@@ -135,7 +135,7 @@ class PQSMPDAgent(nn.Module):
         x = (a.sqrt() * actions + (1 - a).sqrt() * z).detach().requires_grad_(True)
         e = self.actor(observations, x, k[:, None].float() / self.flow_steps)
         # min -> mean change
-        q = self.pessimistic_q(self.critic(observations, x)).sum()
+        q = self.pessimistic_q(self.target_critic(observations, x)).sum()
         g = torch.autograd.grad(q, x)[0].detach()
         loss = ((-e - self.inv_temp * g) ** 2).mean() + self.alpha * ((z - e) ** 2).mean()
 
